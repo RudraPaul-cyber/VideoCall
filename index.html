@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P2P Video Call App</title>
+  
+  <!-- PeerJS CDN -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    body {
+      background-color: #121212;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 15px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      background: #1e1e1e;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 15px;
+      color: #00e676;
+    }
+
+    .status-bar {
+      text-align: center;
+      padding: 8px;
+      margin-bottom: 15px;
+      border-radius: 6px;
+      font-size: 14px;
+      background: #333;
+    }
+
+    .status-connecting { background: #ff9800; color: #000; }
+    .status-ready { background: #2196f3; }
+    .status-connected { background: #4caf50; }
+
+    /* Video Container Layout */
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      padding: 10px;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      padding-top: 56.25%; /* 16:9 Aspect Ratio */
+      background: #2a2a2a;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .video-label {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    /* Share Section */
+    .share-card {
+      background: #2a2a2a;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background: #121212;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 6px;
+      background: #00e676;
+      color: #000;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    button:hover {
+      background: #00c853;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      gap: 15px;
+      margin-top: 15px;
+    }
+
+    .btn-danger {
+      background: #ff5252;
+      color: #fff;
+    }
+
+    .btn-danger:hover {
+      background: #d50000;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* Toast Notification */
+    #toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #323232;
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      z-index: 1000;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h2>P2P Video Call</h2>
+
+    <div id="statusBar" class="status-bar status-connecting">Initializing Local Link...</div>
+
+    <!-- Video Streams -->
+    <div class="video-grid">
+      <div class="video-wrapper">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <div class="video-label">You</div>
+      </div>
+      <div class="video-wrapper">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <div class="video-label" id="remoteLabel">Waiting for partner...</div>
+      </div>
+    </div>
+
+    <!-- Share Link Section -->
+    <div id="shareSection" class="share-card">
+      <p>Share this link with your friend to join the call:</p>
+      <div class="input-group">
+        <input type="text" id="shareUrlInput" readonly placeholder="Generating link...">
+        <button id="copyBtn">Copy Link</button>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button id="toggleMic">Mute Mic</button>
+      <button id="toggleCam">Turn Off Camera</button>
+      <button id="endCallBtn" class="btn-danger hidden">End Call</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    // DOM Elements
+    const statusBar = document.getElementById('statusBar');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const remoteLabel = document.getElementById('remoteLabel');
+    const shareSection = document.getElementById('shareSection');
+    const shareUrlInput = document.getElementById('shareUrlInput');
+    const copyBtn = document.getElementById('copyBtn');
+    const toggleMicBtn = document.getElementById('toggleMic');
+    const toggleCamBtn = document.getElementById('toggleCam');
+    const endCallBtn = document.getElementById('endCallBtn');
+
+    // Global Variables
+    let peer = null;
+    let myPeerId = '';
+    let localStream = null;
+    let currentCall = null;
+    let micEnabled = true;
+    let camEnabled = true;
+
+    // URL Param Check
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomFromUrl = urlParams.get('room');
+
+    // Helper: Random ID Generator
+    function generateRandomId() {
+      return Math.random().toString(36).substring(2, 9);
+    }
+
+    // Helper: Toast Display
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.innerText = message;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 3000);
+    }
+
+    // 1. Instant Link Creation (No PeerJS waiting)
+    function setupInstantLink() {
+      if (!roomFromUrl) {
+        myPeerId = generateRandomId();
+        const fullLink = `${window.location.origin}${window.location.pathname}?room=${myPeerId}`;
+        shareUrlInput.value = fullLink;
+      } else {
+        // Joining via Link
+        shareSection.classList.add('hidden');
+        updateStatus('connecting', 'Connecting to host...');
+      }
+    }
+
+    // Status UI Updates
+    function updateStatus(type, text) {
+      statusBar.innerText = text;
+      statusBar.className = 'status-bar';
+      if (type === 'connecting') statusBar.classList.add('status-connecting');
+      if (type === 'ready') statusBar.classList.add('status-ready');
+      if (type === 'connected') statusBar.classList.add('status-connected');
+    }
+
+    // 2. Initialize Camera & Mic
+    async function startLocalMedia() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        localVideo.srcObject = localStream;
+      } catch (err) {
+        console.error('Media error:', err);
+        showToast('Camera/Microphone access failed. Please use HTTPS.');
+      }
+    }
+
+    // 3. Initialize PeerJS Connection
+    function initPeer() {
+      // Host uses generated ID, Guest generates new ID
+      const peerConfigId = roomFromUrl ? generateRandomId() : myPeerId;
+
+      peer = new Peer(peerConfigId, {
+        host: '0.peerjs.com',
+        port: 443,
+        secure: true,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
+      });
+
+      peer.on('open', (id) => {
+        console.log('Peer Server Connected. ID:', id);
+        if (!roomFromUrl) {
+          updateStatus('ready', 'Ready! Waiting for recipient to join...');
+        } else {
+          // Join Host
+          makeCall(roomFromUrl);
+        }
+      });
+
+      // Handle Incoming Call (Host side)
+      peer.on('call', (call) => {
+        currentCall = call;
+        call.answer(localStream);
+        handleCallEvents(call);
+      });
+
+      peer.on('error', (err) => {
+        console.error('Peer error:', err);
+        if (err.type === 'peer-unavailable') {
+          showToast('Host is unavailable or link expired.');
+        } else {
+          showToast('Server connection issue. Retrying...');
+        }
+      });
+    }
+
+    // 4. Make Call (Guest side)
+    function makeCall(targetId) {
+      if (!localStream) {
+        setTimeout(() => makeCall(targetId), 1000);
+        return;
+      }
+
+      updateStatus('connecting', 'Calling host...');
+      const call = peer.call(targetId, localStream);
+      currentCall = call;
+      handleCallEvents(call);
+    }
+
+    // 5. Stream Handling Events
+    function handleCallEvents(call) {
+      call.on('stream', (remoteStream) => {
+        remoteVideo.srcObject = remoteStream;
+        remoteLabel.innerText = "Partner";
+        updateStatus('connected', 'Connected in Call');
+        shareSection.classList.add('hidden');
+        endCallBtn.classList.remove('hidden');
+      });
+
+      call.on('close', () => {
+        showToast('Call ended');
+        resetCallUI();
+      });
+
+      call.on('error', () => {
+        showToast('Call connection broken');
+        resetCallUI();
+      });
+    }
+
+    // Call End Reset
+    function resetCallUI() {
+      remoteVideo.srcObject = null;
+      remoteLabel.innerText = "Waiting for partner...";
+      endCallBtn.classList.add('hidden');
+      if (!roomFromUrl) {
+        shareSection.classList.remove('hidden');
+        updateStatus('ready', 'Ready! Waiting for recipient to join...');
+      } else {
+        updateStatus('connecting', 'Disconnected');
+      }
+    }
+
+    // Copy Button Handler
+    copyBtn.addEventListener('click', () => {
+      if (!shareUrlInput.value) return;
+      navigator.clipboard.writeText(shareUrlInput.value)
+        .then(() => showToast('Link copied to clipboard!'))
+        .catch(() => showToast('Failed to copy. Copy manually.'));
+    });
+
+    // Mute Microphone
+    toggleMicBtn.addEventListener('click', () => {
+      if (localStream) {
+        micEnabled = !micEnabled;
+        localStream.getAudioTracks()[0].enabled = micEnabled;
+        toggleMicBtn.innerText = micEnabled ? 'Mute Mic' : 'Unmute Mic';
+      }
+    });
+
+    // Turn off Camera
+    toggleCamBtn.addEventListener('click', () => {
+      if (localStream) {
+        camEnabled = !camEnabled;
+        localStream.getVideoTracks()[0].enabled = camEnabled;
+        toggleCamBtn.innerText = camEnabled ? 'Turn Off Camera' : 'Turn On Camera';
+      }
+    });
+
+    // End Call Button
+    endCallBtn.addEventListener('click', () => {
+      if (currentCall) {
+        currentCall.close();
+      }
+      resetCallUI();
+    });
+
+    // Application Bootstrap Sequence
+    setupInstantLink();
+    startLocalMedia().then(() => {
+      initPeer();
+    });
+  </script>
+</body>
+</html>
